@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 import pytz
 
-# Configuração de Cidades
+# Cidades e Coordenadas
 CIDADES = {
     "Jaqueira/PE": {"lat": -8.72, "lon": -35.80},
     "Flexeiras/AL": {"lat": -9.26, "lon": -35.71},
@@ -14,22 +14,17 @@ CIDADES = {
 }
 
 def check_weather():
-    # Configura fuso horário de Brasília
     fuso = pytz.timezone('America/Sao_Paulo')
     agora = datetime.now(fuso)
-    hora = agora.hour
-    dia_semana = agora.weekday() # 0=Segunda, 6=Domingo
-
-    # REGRA: Não enviar aos domingos
-    if dia_semana == 6:
-        print("Hoje é domingo. Sem envios conforme solicitado.")
+    
+    if agora.weekday() == 6: # Domingo não envia
         return
 
     token = os.getenv('TELEGRAM_TOKEN')
     chat_id = os.getenv('CHAT_ID')
-    api_key = os.getenv('WEATHER_KEY')
+    hora = agora.hour
 
-    # Define o Título da Mensagem
+    # Títulos
     if hora == 19:
         titulo = "📝 *PREVISÃO PARA AMANHÃ (PLANEJAMENTO)*"
     elif hora == 5:
@@ -40,31 +35,35 @@ def check_weather():
     mensagem = f"{titulo}\n\n"
 
     for cidade, coord in CIDADES.items():
+        # Open-Meteo: Gratuito, sem chave e mais preciso para o Brasil
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={coord['lat']}&longitude={coord['lon']}&current=temperature_2m,relative_humidity_2m,rain&hourly=rain,precipitation_probability&timezone=America%2FSao_Paulo&forecast_days=2"
+        
+        res = requests.get(url).json()
+        
         if hora == 19:
-            # Busca Previsão (Forecast) para amanhã
-            url = f"https://api.openweathermap.org/data/2.5/forecast?lat={coord['lat']}&lon={coord['lon']}&appid={api_key}&units=metric&lang=pt_br"
-            res = requests.get(url).json()
-            item = res['list'][8] # Aproximadamente 24h à frente
-            temp = item['main']['temp']
-            chuva_prob = item.get('pop', 0) * 100
-            chuva_mm = item.get('rain', {}).get('3h', 0)
+            # Pega a previsão para o dia seguinte (mesma hora de amanhã)
+            chuva_mm = res['hourly']['rain'][24 + hora]
+            prob = res['hourly']['precipitation_probability'][24 + hora]
+            temp = res['hourly']['temperature_2m'][24 + hora]
         else:
-            # Busca Tempo Atual
-            url = f"https://api.openweathermap.org/data/2.5/weather?lat={coord['lat']}&lon={coord['lon']}&appid={api_key}&units=metric&lang=pt_br"
-            res = requests.get(url).json()
-            temp = res['main']['temp']
-            chuva_mm = res.get('rain', {}).get('1h', 0)
-            chuva_prob = "N/A"
+            # Pega o tempo real agora
+            chuva_mm = res['current']['rain']
+            temp = res['current']['temperature_2m']
+            prob = res['hourly']['precipitation_probability'][hora]
 
-        # Lógica de Status (Baseado no seu documento: 20mm inviabiliza)
-        status = "🔴 ALERTA: CHUVA PESADA" if (isinstance(chuva_mm, (int, float)) and chuva_mm >= 20) else "✅ LIBERADO"
+        # Lógica do Asfalto (Documento original: 20mm inviabiliza)
+        if chuva_mm >= 20:
+            status = "🔴 ALERTA: CHUVA PESADA"
+        elif chuva_mm > 0.5:
+            status = "🟡 ATENÇÃO: CHUVA LEVE/MODERADA"
+        else:
+            status = "✅ LIBERADO"
 
         mensagem += f"📍 *{cidade}*\n"
-        mensagem += f"🌡️ Temp: {temp}°C | 🌧️ Chuva: {chuva_mm}mm\n"
-        if hora == 19: mensagem += f"📊 Probabilidade: {chuva_prob:.0f}%\n"
+        mensagem += f"🌡️ {temp}°C | 🌧️ {chuva_mm}mm | 📊 Prob: {prob}%\n"
         mensagem += f"📢 Status: {status}\n\n"
 
-    # Envio
+    # Envio para Telegram
     url_tel = f"https://api.telegram.org/bot{token}/sendMessage"
     requests.post(url_tel, data={"chat_id": chat_id, "text": mensagem, "parse_mode": "Markdown"})
 
