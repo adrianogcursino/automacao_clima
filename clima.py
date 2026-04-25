@@ -19,16 +19,24 @@ def check_weather():
     hora_atual = agora.hour
     dia_semana = agora.weekday() # 6 é Domingo
 
-    # Regra: Domingo só envia o planejamento das 19h. Outros horários de domingo, para.
+    # --- REGRAS DE HORÁRIO ---
+    
+    # 1. Se for Domingo e NÃO for 19h, não envia nada.
     if dia_semana == 6 and hora_atual != 19:
-        print("Domingo de descanso. Voltaremos às 19h com o planejamento.")
+        print("Domingo: Apenas o planeamento das 19h será enviado.")
+        return
+
+    # 2. Bloqueia atualizações de rotina após as 18h e antes das 05h
+    # (Exceto o horário das 19h que é o planeamento)
+    if (hora_atual > 18 or hora_atual < 5) and hora_atual != 19:
+        print(f"Fora do horário de operação ({hora_atual}h).")
         return
 
     token = os.getenv('TELEGRAM_TOKEN')
     chat_id = os.getenv('CHAT_ID')
 
     if hora_atual == 19:
-        titulo = "📅 *PLANEJAMENTO SEMANAL (PRÓXIMOS 7 DIAS)*"
+        titulo = "📅 *PLANEAMENTO SEMANAL (PRÓXIMOS 7 DIAS)*"
     elif hora_atual == 5:
         titulo = "🌅 *STATUS MATINAL DA OBRA*"
     else:
@@ -38,25 +46,25 @@ def check_weather():
 
     for cidade, coord in CIDADES.items():
         try:
-            # Pedindo 7 dias de previsão
-            url = f"https://api.open-meteo.com/v1/forecast?latitude={coord['lat']}&longitude={coord['lon']}&daily=precipitation_sum,precipitation_probability_max,temperature_2m_max&current=temperature_2m,rain&timezone=America%2FSao_Paulo&forecast_days=8"
+            # Open-Meteo: Dados diários para os 7 dias e atuais para rotina
+            url = f"https://api.open-meteo.com/v1/forecast?latitude={coord['lat']}&longitude={coord['lon']}&daily=precipitation_sum,precipitation_probability_max&current=temperature_2m,rain&timezone=America%2FSao_Paulo&forecast_days=8"
             res = requests.get(url).json()
 
             if hora_atual == 19:
-                # MODO SEMANAL
+                # MODO SEMANAL (7 dias à frente)
                 mensagem_final += f"📍 *{cidade}*\n"
-                for i in range(1, 8): # Do dia 1 (amanhã) ao dia 7
+                for i in range(1, 8):
                     data = (agora + timedelta(days=i)).strftime('%d/%m')
                     chuva = res['daily']['precipitation_sum'][i]
                     prob = res['daily']['precipitation_probability_max'][i]
-                    # Ícone de alerta se chover muito no dia
-                    alerta_dia = "⚠️" if chuva >= 20 else "🔹"
-                    mensagem_final += f"{alerta_dia} {data}: {chuva}mm ({prob}%)\n"
+                    alerta = "⚠️" if chuva >= 20 else "🔹"
+                    mensagem_final += f"{alerta} {data}: {chuva}mm ({prob}%)\n"
                 mensagem_final += "\n"
             else:
-                # MODO ROTINA (IGUAL AO ANTERIOR)
+                # MODO ROTINA (Das 05h às 18h)
                 temp = res['current']['temperature_2m']
                 chuva_mm = res['current']['rain']
+                # Regra do PDF: 20mm inviabiliza asfalto
                 status = "🔴 ALERTA: CHUVA" if chuva_mm >= 20 else "✅ LIBERADO"
                 mensagem_final += f"📍 *{cidade}*\n🌡️ {temp}°C | 🌧️ {chuva_mm}mm\n📢 Status: {status}\n\n"
 
