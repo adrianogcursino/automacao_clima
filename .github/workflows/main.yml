@@ -1,20 +1,22 @@
-name: Alerta Climatico Diario
+name: Monitoramento Climatico Obra
 on:
   schedule:
-    - cron: '0 7 * * *' # 7:00 UTC é 4:00 em Brasília
-  workflow_dispatch: # Permite rodar manualmente para testar
+    # Programado para rodar a cada 2 horas (em UTC)
+    # 22h UTC (19h Brasília), 08h UTC (05h Brasília) e de 2h em 2h
+    - cron: '0 0,2,4,6,8,10,12,14,16,18,20,22 * * *'
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Setup Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11'
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests pytz
       - name: Run script
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
