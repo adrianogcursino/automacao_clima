@@ -1,9 +1,9 @@
 import requests
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
-# Cidades e Coordenadas do seu documento
+# Cidades e Coordenadas
 CIDADES = {
     "Jaqueira/PE": {"lat": -8.72, "lon": -35.80},
     "Flexeiras/AL": {"lat": -9.26, "lon": -35.71},
@@ -14,65 +14,58 @@ CIDADES = {
 }
 
 def check_weather():
-    # Configura fuso horário de Brasília
     fuso = pytz.timezone('America/Sao_Paulo')
     agora = datetime.now(fuso)
-    
-    # REGRA: Não enviar aos domingos (6 é domingo)
-    if agora.weekday() == 6:
-        print("Hoje é domingo, pulando envio.")
+    hora_atual = agora.hour
+    dia_semana = agora.weekday() # 6 é Domingo
+
+    # Regra: Domingo só envia o planejamento das 19h. Outros horários de domingo, para.
+    if dia_semana == 6 and hora_atual != 19:
+        print("Domingo de descanso. Voltaremos às 19h com o planejamento.")
         return
 
     token = os.getenv('TELEGRAM_TOKEN')
     chat_id = os.getenv('CHAT_ID')
-    hora_atual = agora.hour
 
-    # Define o título conforme seu pedido
     if hora_atual == 19:
-        titulo = "📝 *PREVISÃO PARA AMANHÃ (PLANEJAMENTO)*"
+        titulo = "📅 *PLANEJAMENTO SEMANAL (PRÓXIMOS 7 DIAS)*"
     elif hora_atual == 5:
         titulo = "🌅 *STATUS MATINAL DA OBRA*"
     else:
         titulo = f"🕒 *ATUALIZAÇÃO DE ROTINA ({hora_atual}h)*"
 
-    mensagem = f"{titulo}\n\n"
+    mensagem_final = f"{titulo}\n\n"
 
     for cidade, coord in CIDADES.items():
         try:
-            # URL do Open-Meteo (Melhor precisão para o Brasil)
-            url = f"https://api.open-meteo.com/v1/forecast?latitude={coord['lat']}&longitude={coord['lon']}&current=temperature_2m,rain&hourly=precipitation_probability,rain&timezone=America%2FSao_Paulo&forecast_days=2"
+            # Pedindo 7 dias de previsão
+            url = f"https://api.open-meteo.com/v1/forecast?latitude={coord['lat']}&longitude={coord['lon']}&daily=precipitation_sum,precipitation_probability_max,temperature_2m_max&current=temperature_2m,rain&timezone=America%2FSao_Paulo&forecast_days=8"
             res = requests.get(url).json()
 
             if hora_atual == 19:
-                # Previsão para amanhã (24h a frente da hora atual)
-                indice = 24 + hora_atual
-                temp = res['hourly']['temperature_2m'][indice] if 'temperature_2m' in res['hourly'] else "N/A"
-                chuva_mm = res['hourly']['rain'][indice]
-                prob = res['hourly']['precipitation_probability'][indice]
+                # MODO SEMANAL
+                mensagem_final += f"📍 *{cidade}*\n"
+                for i in range(1, 8): # Do dia 1 (amanhã) ao dia 7
+                    data = (agora + timedelta(days=i)).strftime('%d/%m')
+                    chuva = res['daily']['precipitation_sum'][i]
+                    prob = res['daily']['precipitation_probability_max'][i]
+                    # Ícone de alerta se chover muito no dia
+                    alerta_dia = "⚠️" if chuva >= 20 else "🔹"
+                    mensagem_final += f"{alerta_dia} {data}: {chuva}mm ({prob}%)\n"
+                mensagem_final += "\n"
             else:
-                # Tempo real agora
+                # MODO ROTINA (IGUAL AO ANTERIOR)
                 temp = res['current']['temperature_2m']
                 chuva_mm = res['current']['rain']
-                prob = res['hourly']['precipitation_probability'][hora_atual]
+                status = "🔴 ALERTA: CHUVA" if chuva_mm >= 20 else "✅ LIBERADO"
+                mensagem_final += f"📍 *{cidade}*\n🌡️ {temp}°C | 🌧️ {chuva_mm}mm\n📢 Status: {status}\n\n"
 
-            # Lógica do Asfalto: 20mm inviabiliza (conforme seu PDF)
-            if chuva_mm >= 20:
-                status = "🔴 ALERTA: CHUVA PESADA"
-            elif chuva_mm > 0.2:
-                status = "🟡 ATENÇÃO: CHUVA LEVE"
-            else:
-                status = "✅ LIBERADO"
-
-            mensagem += f"📍 *{cidade}*\n"
-            mensagem += f"🌡️ {temp}°C | 🌧️ {chuva_mm}mm | 📊 Prob: {prob}%\n"
-            mensagem += f"📢 Status: {status}\n\n"
-        
         except Exception as e:
-            mensagem += f"📍 *{cidade}*: Erro ao obter dados.\n\n"
+            mensagem_final += f"📍 *{cidade}*: Erro nos dados.\n\n"
 
     # Enviar para o Telegram
     url_tel = f"https://api.telegram.org/bot{token}/sendMessage"
-    requests.post(url_tel, data={"chat_id": chat_id, "text": mensagem, "parse_mode": "Markdown"})
+    requests.post(url_tel, data={"chat_id": chat_id, "text": mensagem_final, "parse_mode": "Markdown"})
 
 if __name__ == "__main__":
     check_weather()
