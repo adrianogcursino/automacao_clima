@@ -2,6 +2,7 @@ import requests
 import os
 from datetime import datetime, timedelta
 import pytz
+import json
 
 CIDADES = {
     "Jaqueira/PE": {"lat": -8.72, "lon": -35.80},
@@ -12,21 +13,10 @@ CIDADES = {
     "Capela/AL": {"lat": -9.40, "lon": -36.07}
 }
 
-def get_consensun_data(lat, lon, mode="current"):
-    # Consulta o modelo Europeu (ECMWF) e o Americano (GFS) simultaneamente
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,rain&daily=precipitation_sum,precipitation_probability_max&timezone=America%2FSao_Paulo&models=ecmwf_ifs04,gfs_seamless"
-    res = requests.get(url).json()
-    
-    if mode == "current":
-        # Média da temperatura e chuva atual entre os dois modelos
-        t1 = res['current']['temperature_2m']
-        r1 = res['current']['rain']
-        # Nota: Como usamos multi-modelos, a API retorna estruturas levemente diferentes. 
-        # Para simplificar e garantir precisão, pegamos a média ponderada.
-        return {"temp": t1, "rain": r1}
-    else:
-        # Retorna os dados diários para o planejamento semanal
-        return res['daily']
+def get_weather_data(lat, lon):
+    # Adicionamos humidade relativa (relative_humidity_2m) para o índice de cura
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,rain&daily=precipitation_sum,precipitation_probability_max&timezone=America%2FSao_Paulo&models=ecmwf_ifs04,gfs_seamless"
+    return requests.get(url).json()
 
 def check_weather():
     fuso = pytz.timezone('America/Sao_Paulo')
@@ -44,35 +34,66 @@ def check_weather():
     chat_id = os.getenv('CHAT_ID')
 
     if hora_atual == 19:
-        titulo = "📊 *PLANEAMENTO SEMANAL (MÉDIA DE MODELOS)*"
+        titulo = "📊 *PLANEAMENTO SEMANAL E RISCO*"
     else:
-        titulo = f"🕒 *ROTINA: CONSENSO METEOROLÓGICO ({hora_atual}h)*"
+        titulo = f"🚦 *STATUS OPERACIONAL ({hora_atual}h)*"
 
     mensagem_final = f"{titulo}\n\n"
 
     for cidade, coord in CIDADES.items():
         try:
+            res = get_weather_data(coord['lat'], coord['lon'])
+            
             if hora_atual == 19:
-                data_clima = get_consensun_data(coord['lat'], coord['lon'], "weekly")
                 mensagem_final += f"📍 *{cidade}*\n"
                 for i in range(1, 8):
                     data_str = (agora + timedelta(days=i)).strftime('%d/%m')
-                    # Média de chuva dos modelos
-                    chuva = data_clima['precipitation_sum'][i]
-                    prob = data_clima['precipitation_probability_max'][i]
-                    alerta = "⚠️" if chuva >= 20 else "🔹"
-                    mensagem_final += f"{alerta} {data_str}: {chuva}mm ({prob}%)\n"
+                    chuva = res['daily']['precipitation_sum'][i]
+                    prob = res['daily']['precipitation_probability_max'][i]
+                    
+                    if chuva >= 15: icone = "🔴"
+                    elif chuva > 0: icone = "🟡"
+                    else: icone = "🟢"
+                    
+                    mensagem_final += f"{icone} {data_str}: {chuva}mm ({prob}%)\n"
                 mensagem_final += "\n"
             else:
-                clima = get_consensun_data(coord['lat'], coord['lon'], "current")
-                status = "🔴 ALERTA: RISCO DE CHUVA" if clima['rain'] >= 15 else "✅ LIBERADO"
-                mensagem_final += f"📍 *{cidade}*\n🌡️ {clima['temp']}°C | 🌧️ {clima['rain']}mm\n📢 Status: {status}\n\n"
+                temp = res['current']['temperature_2m']
+                humidade = res['current']['relative_humidity_2m']
+                chuva = res['current']['rain']
+                
+                # Lógica do Semáforo
+                if chuva >= 15:
+                    status = "🔴 *PARALISAR: CHUVA PESADA*"
+                elif chuva > 0 or humidade > 85:
+                    status = "🟡 *ATENÇÃO: CHUVA OU HUMIDADE ALTA*"
+                else:
+                    status = "🟢 *LIBERADO: CONDIÇÕES IDEAIS*"
+                
+                mensagem_final += f"📍 *{cidade}*\n🌡️ {temp}°C | 💧 Hum: {humidade}%\n🌧️ Chuva: {chuva}mm\n📢 {status}\n\n"
 
         except Exception as e:
-            mensagem_final += f"📍 *{cidade}*: Erro na média de dados.\n\n"
+            mensagem_final += f"📍 *{cidade}*: Erro na leitura.\n\n"
+
+    # --- SUGESTÃO 4: BOTÕES DE RADAR ---
+    # Criamos um botão que abre o radar focado na região das obras (Windy)
+    radar_url = "https://www.windy.com/-9.400/-36.000?rain,-9.400,-36.000,9"
+    
+    keyboard = {
+        "inline_keyboard": [[
+            {"text": "📡 Ver Radar em Tempo Real", "url": radar_url}
+        ]]
+    }
 
     url_tel = f"https://api.telegram.org/bot{token}/sendMessage"
-    requests.post(url_tel, data={"chat_id": chat_id, "text": mensagem_final, "parse_mode": "Markdown"})
+    payload = {
+        "chat_id": chat_id, 
+        "text": mensagem_final, 
+        "parse_mode": "Markdown",
+        "reply_markup": json.dumps(keyboard)
+    }
+    
+    requests.post(url_tel, data=payload)
 
 if __name__ == "__main__":
     check_weather()
