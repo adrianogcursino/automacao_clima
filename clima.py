@@ -13,20 +13,15 @@ CIDADES = {
     "Capela/AL": {"lat": -9.40, "lon": -36.07}
 }
 
-def get_weather_data(lat, lon):
-    # Adicionamos humidade relativa (relative_humidity_2m) para o índice de cura
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,rain&daily=precipitation_sum,precipitation_probability_max&timezone=America%2FSao_Paulo&models=ecmwf_ifs04,gfs_seamless"
-    return requests.get(url).json()
-
 def check_weather():
     fuso = pytz.timezone('America/Sao_Paulo')
     agora = datetime.now(fuso)
     hora_atual = agora.hour
     dia_semana = agora.weekday()
 
+    # Regras de Horário
     if dia_semana == 6 and hora_atual != 19:
         return
-
     if (hora_atual > 18 or hora_atual < 5) and hora_atual != 19:
         return
 
@@ -42,46 +37,48 @@ def check_weather():
 
     for cidade, coord in CIDADES.items():
         try:
-            res = get_weather_data(coord['lat'], coord['lon'])
+            # Chamada otimizada usando o modelo Europeu (ECMWF)
+            url = f"https://api.open-meteo.com/v1/forecast?latitude={coord['lat']}&longitude={coord['lon']}&current=temperature_2m,relative_humidity_2m,rain&daily=precipitation_sum,precipitation_probability_max&timezone=America%2FSao_Paulo&models=ecmwf_ifs04&forecast_days=8"
+            res = requests.get(url).json()
             
             if hora_atual == 19:
                 mensagem_final += f"📍 *{cidade}*\n"
+                # O índice do modelo ECMWF vem dentro de 'daily' normalmente
                 for i in range(1, 8):
                     data_str = (agora + timedelta(days=i)).strftime('%d/%m')
                     chuva = res['daily']['precipitation_sum'][i]
                     prob = res['daily']['precipitation_probability_max'][i]
                     
                     if chuva >= 15: icone = "🔴"
-                    elif chuva > 0: icone = "🟡"
+                    elif chuva > 0.5: icone = "🟡"
                     else: icone = "🟢"
                     
                     mensagem_final += f"{icone} {data_str}: {chuva}mm ({prob}%)\n"
                 mensagem_final += "\n"
             else:
+                # Dados atuais
                 temp = res['current']['temperature_2m']
                 humidade = res['current']['relative_humidity_2m']
                 chuva = res['current']['rain']
                 
-                # Lógica do Semáforo
+                # Lógica do Semáforo (PDF original adaptado)
                 if chuva >= 15:
                     status = "🔴 *PARALISAR: CHUVA PESADA*"
-                elif chuva > 0 or humidade > 85:
-                    status = "🟡 *ATENÇÃO: CHUVA OU HUMIDADE ALTA*"
+                elif chuva > 0.5 or humidade > 85:
+                    status = "🟡 *ATENÇÃO: RISCO DE CHUVA/UMIDADE*"
                 else:
                     status = "🟢 *LIBERADO: CONDIÇÕES IDEAIS*"
                 
                 mensagem_final += f"📍 *{cidade}*\n🌡️ {temp}°C | 💧 Hum: {humidade}%\n🌧️ Chuva: {chuva}mm\n📢 {status}\n\n"
 
         except Exception as e:
-            mensagem_final += f"📍 *{cidade}*: Erro na leitura.\n\n"
+            print(f"Erro em {cidade}: {e}")
+            mensagem_final += f"📍 *{cidade}*: Sem dados no momento.\n\n"
 
-    # --- SUGESTÃO 4: BOTÕES DE RADAR ---
-    # Criamos um botão que abre o radar focado na região das obras (Windy)
-    radar_url = "https://www.windy.com/-9.400/-36.000?rain,-9.400,-36.000,9"
-    
+    # Botão do Radar Windy focado na região central das obras
     keyboard = {
         "inline_keyboard": [[
-            {"text": "📡 Ver Radar em Tempo Real", "url": radar_url}
+            {"text": "📡 Ver Radar em Tempo Real", "url": "https://www.windy.com/-9.400/-36.000?rain,-9.400,-36.000,9"}
         ]]
     }
 
