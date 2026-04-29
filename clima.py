@@ -16,82 +16,64 @@ CIDADES = {
 def check_weather():
     fuso = pytz.timezone('America/Sao_Paulo')
     agora = datetime.now(fuso)
-    hora_atual = agora.hour
+    hora = agora.hour
     dia_semana = agora.weekday()
 
-    # Regras de Horário (Conforme seu pedido)
-    if dia_semana == 6 and hora_atual != 19:
-        return
-    if (hora_atual > 18 or hora_atual < 5) and hora_atual != 19:
+    # Bloqueio de Domingo (exceto as mensagens de planejamento para segunda)
+    if dia_semana == 6 and hora not in [19, 20]:
         return
 
     token = os.getenv('TELEGRAM_TOKEN')
     chat_id = os.getenv('CHAT_ID')
 
-    if hora_atual == 19:
-        titulo = "📊 *PLANEAMENTO SEMANAL E RISCO*"
+    # Definição do Tipo de Mensagem
+    if hora == 19:
+        titulo = "📊 *PLANEJAMENTO SEMANAL (7 DIAS)*"
+    elif hora == 20:
+        titulo = "🚀 *FOCO AMANHÃ: PREVISÃO DETALHADA*"
     else:
-        titulo = f"🚦 *STATUS OPERACIONAL ({hora_atual}h)*"
+        titulo = f"🚦 *STATUS OPERACIONAL ({hora}h)*"
 
     mensagem_final = f"{titulo}\n\n"
 
     for cidade, coord in CIDADES.items():
         try:
-            # URL simplificada e mais robusta (Modelo Seamless - Padrão)
             url = f"https://api.open-meteo.com/v1/forecast?latitude={coord['lat']}&longitude={coord['lon']}&current=temperature_2m,relative_humidity_2m,rain&daily=precipitation_sum,precipitation_probability_max&timezone=America%2FSao_Paulo&forecast_days=8"
             res = requests.get(url).json()
             
-            if hora_atual == 19:
-                # MODO SEMANAL (7 dias)
+            if hora == 19:
+                # MODO 7 DIAS
                 mensagem_final += f"📍 *{cidade}*\n"
                 for i in range(1, 8):
-                    data_str = (agora + timedelta(days=i)).strftime('%d/%m')
-                    chuva = res['daily']['precipitation_sum'][i]
-                    prob = res['daily']['precipitation_probability_max'][i]
-                    
-                    if chuva >= 15: icone = "🔴"
-                    elif chuva > 0.5: icone = "🟡"
-                    else: icone = "🟢"
-                    
-                    mensagem_final += f"{icone} {data_str}: {chuva}mm ({prob}%)\n"
+                    d = (agora + timedelta(days=i)).strftime('%d/%m')
+                    c = res['daily']['precipitation_sum'][i]
+                    p = res['daily']['precipitation_probability_max'][i]
+                    icone = "🔴" if c >= 15 else ("🟡" if c > 0.5 else "🟢")
+                    mensagem_final += f"{icone} {d}: {c}mm ({p}%)\n"
                 mensagem_final += "\n"
+                
+            elif hora == 20:
+                # MODO DIA SEGUINTE
+                c_amanha = res['daily']['precipitation_sum'][1]
+                p_amanha = res['daily']['precipitation_probability_max'][1]
+                status = "🔴 ALERTA" if c_amanha >= 15 else "🟢 LIBERADO"
+                mensagem_final += f"📍 *{cidade}* (Amanhã)\n🌧️ {c_amanha}mm | 📊 Prob: {p_amanha}%\n📢 {status}\n\n"
+                
             else:
-                # MODO ROTINA (Das 05h às 18h)
+                # MODO ROTINA (06h às 16h)
                 temp = res['current']['temperature_2m']
-                humidade = res['current']['relative_humidity_2m']
+                hum = res['current']['relative_humidity_2m']
                 chuva = res['current']['rain']
-                
-                # Lógica do Semáforo para Obra de Asfalto
-                if chuva >= 15:
-                    status = "🔴 *PARALISAR: CHUVA PESADA*"
-                elif chuva > 0.5 or humidade > 85:
-                    status = "🟡 *ATENÇÃO: CHUVA OU HUMIDADE ALTA*"
-                else:
-                    status = "🟢 *LIBERADO: CONDIÇÕES IDEAIS*"
-                
-                mensagem_final += f"📍 *{cidade}*\n🌡️ {temp}°C | 💧 Hum: {humidade}%\n🌧️ Chuva: {chuva}mm\n📢 {status}\n\n"
+                status = "🔴 *PARALISAR*" if chuva >= 15 else ("🟡 *RISCO*" if (chuva > 0.5 or hum > 85) else "🟢 *OK*")
+                mensagem_final += f"📍 *{cidade}*\n🌡️ {temp}°C | 💧 Hum: {hum}%\n🌧️ {chuva}mm | 📢 {status}\n\n"
 
-        except Exception as e:
-            # Se der erro, ele avisa qual foi no log interno do GitHub
-            print(f"Erro ao processar {cidade}: {e}")
-            mensagem_final += f"📍 *{cidade}*: Temporariamente indisponível.\n\n"
+        except:
+            mensagem_final += f"📍 *{cidade}*: Erro na leitura.\n\n"
 
-    # Botão de Radar Interativo (Windy)
-    keyboard = {
-        "inline_keyboard": [[
-            {"text": "📡 Ver Radar em Tempo Real", "url": "https://www.windy.com/-9.400/-36.000?rain,-9.400,-36.000,9"}
-        ]]
-    }
-
-    url_tel = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
-        "chat_id": chat_id, 
-        "text": mensagem_final, 
-        "parse_mode": "Markdown",
-        "reply_markup": json.dumps(keyboard)
-    }
-    
-    requests.post(url_tel, data=payload)
+    # Botão de Radar
+    kb = {"inline_keyboard": [[{"text": "📡 Ver Radar Tempo Real", "url": "https://www.windy.com/-9.400/-36.000?rain,-9.400,-36.000,9"}]]}
+    requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
+                  data={"chat_id": chat_id, "text": mensagem_final, "parse_mode": "Markdown", "reply_markup": json.dumps(kb)})
 
 if __name__ == "__main__":
     check_weather()
